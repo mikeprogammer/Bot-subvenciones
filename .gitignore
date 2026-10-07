@@ -10,3 +10,4 @@ credentials.json
 build/
 dist/
 *.spec
+outputs/

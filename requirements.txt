@@ -1,0 +1,6 @@
+playwright>=1.45,<2
+openpyxl>=3.1,<4
+tzdata>=2024.1
+google-api-python-client>=2,<3
+google-auth-oauthlib>=1,<2
+google-auth-httplib2>=0.2,<1

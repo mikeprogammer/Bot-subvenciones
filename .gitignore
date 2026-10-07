@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.browser-profile/
+.brave-bot-profile/
+config.json
+*.xlsx
+*.tmp.xlsx
+credentials.json
+.google-auth/
+build/
+dist/
+*.spec

@@ -1,0 +1,22 @@
+{
+  "login_url": "https://intranet.caib.es/subvenfront/",
+  "form_url": "https://intranet.caib.es/subvenfront/consulta-estado-expediente-subvencion",
+  "sheet": null,
+  "sheets_url": "",
+  "dni_column": "DNI",
+  "expediente_column": "Nº EXPEDIENTE",
+  "timeout_ms": 30000,
+  "delay_seconds": 2,
+  "selectors": {
+    "titular": "input:is(#titularExpediente, [name='titularExpediente'])",
+    "dni": "input:is(#titularDocumentoNumero, [name='titularDocumentoNumero'])",
+    "expediente": "input:is(#numeroExpedienteCompleto, [name='numeroExpedienteCompleto'])",
+    "buscar": "button.p-button-success:has-text('Cerca')",
+    "resultado": ".resultado-error, .mt-3"
+  },
+  "browser_executable": "",
+  "browser_profile": ".brave-bot-profile",
+  "output_dir": "outputs/consultas",
+  "oauth_credentials": "credentials.json",
+  "oauth_token": ".google-auth/token.json"
+}

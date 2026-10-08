@@ -115,7 +115,8 @@ def parse_sheets_values(values, config):
         if not any(str(value).strip() for value in row):
             continue
         dni, expediente = (str(row[i]).strip() if i < len(row) else "" for i in indices)
-        error = "Falta DNI o número de expediente" if not dni or not expediente else ""
+        missing = [label for label, value in (('DNI', dni), ('número de expediente', expediente)) if not value]
+        error = 'Falta ' + ' y '.join(missing) if missing else ''
         records.append((number, dni, expediente, error))
     return records
 
@@ -235,10 +236,67 @@ def parse_result(text, links=()):
 def visible_result_blocks(page, selector):
     return page.locator(selector).evaluate_all("""els => els
         .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+        .filter(e => !e.querySelector('input, select, textarea'))
         .filter(e => !els.some(other => other !== e && other.contains(e) && other.getClientRects().length))
         .map(e => ({text: e.innerText.trim(), links: Array.from(e.querySelectorAll('a')).map(a =>
             ({text:a.innerText.trim(), href:a.href}))}))
         .filter(e => e.text)""")
+
+
+def changed_result(blocks, before):
+    # La respuesta puede separar estado y anomalías en varios paneles mt-3.
+    # Conserva únicamente los paneles nuevos o modificados por esta consulta.
+    changed = [block for block in blocks if block not in before]
+    texts, links = [], []
+    for block in changed:
+        text = block['text'].strip()
+        if text and text not in texts:
+            texts.append(text)
+        for link in block.get('links', []):
+            if link not in links:
+                links.append(link)
+    return '\n\n'.join(texts), links
+
+
+def form_ready(page, form_url, selectors):
+    if page.is_closed():
+        return False
+    current, expected = urlparse(page.url), urlparse(form_url)
+    if (current.scheme, current.netloc) != (expected.scheme, expected.netloc):
+        return False
+    try:
+        # El DNI puede estar oculto mientras «Soc el titular» está marcado.
+        return (all(page.locator(selectors[key]).count() == 1 for key in ('titular', 'expediente', 'buscar'))
+                and page.locator(selectors['dni']).count() <= 1
+                and all(page.locator(selectors[key]).is_visible() for key in ('expediente', 'buscar')))
+    except Exception:
+        # La pestaña puede estar terminando la redirección de autenticación.
+        return False
+
+
+def find_form(context, form_url, selectors):
+    for page in reversed(context.pages):
+        if form_ready(page, form_url, selectors):
+            return page
+    return None
+
+
+def form_diagnostic(context, selectors):
+    messages = []
+    for index, page in enumerate(context.pages, 1):
+        if page.is_closed():
+            continue
+        url = urlparse(page.url)
+        details = []
+        for key in ('titular', 'dni', 'expediente', 'buscar'):
+            try:
+                field = page.locator(selectors[key])
+                count = field.count()
+                details.append(f'{key}: {count}, visible={field.is_visible() if count == 1 else "—"}')
+            except Exception:
+                details.append(f'{key}: página cambiando')
+        messages.append(f'Pestaña {index} ({url.hostname or "sin dominio"}): ' + '; '.join(details))
+    return '\n'.join(messages) or 'No hay pestañas abiertas en el navegador del bot.'
 
 
 def consult(page, form_url, selectors, dni, expediente, timeout_ms=30000):
@@ -246,7 +304,7 @@ def consult(page, form_url, selectors, dni, expediente, timeout_ms=30000):
     # volver a navegar por el acceso FNMT para cada fila.
     if page.is_closed():
         raise RuntimeError('La pestaña de consulta se ha cerrado. Vuelve a iniciar el lote y mantén Brave abierto.')
-    if page.url.split('?')[0].rstrip('/') != form_url.rstrip('/'):
+    if not form_ready(page, form_url, selectors) and page.url.split('?')[0].split('#')[0].rstrip('/') != form_url.rstrip('/'):
         page.goto(form_url, wait_until="domcontentloaded")
     else:
         reset = page.get_by_role('button', name=re.compile('Neteja'))
@@ -263,9 +321,9 @@ def consult(page, form_url, selectors, dni, expediente, timeout_ms=30000):
     while time.monotonic() < deadline:
         blocks = visible_result_blocks(page, selectors["resultado"])
         if blocks and blocks != before:
-            if len(blocks) != 1:
-                raise ValueError("Hay varios bloques mt-3: configura un selector exclusivo del resultado")
-            return parse_result(blocks[0]["text"], blocks[0]["links"])
+            text, links = changed_result(blocks, before)
+            if text:
+                return parse_result(text, links)
         page.wait_for_timeout(200)
     raise TimeoutError("No apareció un resultado nuevo tras buscar")
 

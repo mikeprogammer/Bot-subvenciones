@@ -78,3 +78,13 @@ class FnmtTests(unittest.TestCase):
             with certificate_policy({'auto_fnmt': False}, 'brave.exe', lambda msg: None):
                 pass
             read.assert_not_called()
+
+    def test_denied_registry_continues_with_manual_certificate(self):
+        registry = MagicMock()
+        registry.CreateKeyEx.side_effect = PermissionError(5, 'Acceso denegado')
+        log = MagicMock()
+        with patch.dict('sys.modules', {'winreg': registry}), patch('fnmt.personal_certificates', return_value=[decode_certificate(self.row())]):
+            with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'brave.exe', log):
+                pass
+        self.assertIn('selección manual', log.call_args.args[0])
+        registry.SetValueEx.assert_not_called()

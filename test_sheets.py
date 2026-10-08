@@ -1,11 +1,18 @@
 """Pruebas sin acceso a Google ni a la intranet."""
 import unittest
 
-from bot import parse_sheets_csv, sheets_export_url
+from bot import parse_sheets_csv, parse_sheets_values, sheets_export_url
 
 
 class SheetsInputTests(unittest.TestCase):
     config = {"dni_column": "DNI", "expediente_column": "Nº EXPEDIENTE"}
+
+    def test_missing_input_identifies_column_without_copying_previous_person(self):
+        rows = parse_sheets_values([['DNI', 'Nº EXPEDIENTE'], ['001A', 'EXP1'],
+                                   ['', 'EXP2'], ['002B'], ['003C', 'EXP3']], self.config)
+        self.assertEqual(rows[1], (3, '', 'EXP2', 'Falta DNI'))
+        self.assertEqual(rows[2], (4, '002B', '', 'Falta número de expediente'))
+        self.assertEqual(rows[3], (5, '003C', 'EXP3', ''))
 
     def test_tab_url(self):
         url = "https://docs.google.com/spreadsheets/d/abc_123/edit#gid=42"

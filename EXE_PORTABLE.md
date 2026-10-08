@@ -66,3 +66,21 @@ Referencias: [políticas de Brave](https://support.brave.app/hc/en-us/articles/3
 Validación: 22 pruebas locales, incluidas exclusión de representantes y caducados, rechazo de selección ambigua, filtros por titular/emisor y retirada de reglas sin borrar las existentes. En la sesión de Windows del usuario se detectaron dos certificados personales vigentes, con titulares/emisores distintos; será necesario elegir una huella una vez. La autenticación FNMT real de la versión 1.2 queda pendiente de probar.
 
 El EXE 1.2 pasó la comprobación de arranque con código 0: interfaz, Playwright, Google API, zona horaria y lectura del almacén Windows. El detector empaquetado también encontró los dos certificados personales.
+
+### Corrección de detección del formulario
+
+La revisión de 1.2 detecta el formulario por los cuatro campos visibles en el origen CAIB configurado, sin exigir una única pestaña ni una URL textual idéntica. Atiende los eventos del navegador durante la espera FNMT y da diez segundos para terminar la redirección al pulsar el botón. Si aún no encuentra el formulario, mantiene Brave abierto y permite pulsar de nuevo. El acceso debe completarse en la ventana abierta por el bot. Las 24 pruebas locales pasan; la autenticación real sigue pendiente de validación del usuario.
+
+### Revisión 3: resultados en varios paneles y permisos FNMT
+
+La respuesta ya no exige un único bloque `.mt-3`: combina los paneles nuevos o modificados respecto al momento anterior a pulsar Cerca, sin repetir textos y conservando sus enlaces. Excluye contenedores que contienen campos del formulario. Esto permite reunir estado y anomalías cuando aparecen separados. Las 27 pruebas incluyen varios paneles con documentos y contenido estático ajeno a la respuesta.
+
+Si Windows deniega crear la regla del navegador (WinError 5), registra el motivo y continúa con selección manual del certificado, sin cambiar permisos ni pedir ejecución como administrador. Esta recuperación solo cubre la creación de esa regla; otros errores de permisos se siguen comunicando.
+
+El ejecutable es `BotSubvenciones_1_2_revision3.exe`; el título identifica la revisión 3. El lote de 52 filas y sus resultados reales requieren validación en la máquina virtual del usuario.
+
+### Revisión 4: filas incompletas
+
+La lectura distingue si falta DNI, número de expediente o ambos. Guarda la fila con el error y su número de origen, y continúa con las siguientes filas en lugar de detener el lote por datos incompletos. No rellena celdas vacías con valores anteriores. Los errores de consulta del navegador siguen deteniendo el lote. Las 29 pruebas incluyen un lote con una fila válida, otra incompleta y una tercera válida, verificando que consulta y exporta la tercera.
+
+Si una fila con datos visibles se recibe vacía, hay que contrastar la fila de origen y el `gid` configurado con la pestaña revisada. Esta revisión no corrige ni presume la causa de esa discrepancia.

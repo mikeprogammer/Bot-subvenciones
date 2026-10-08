@@ -6,11 +6,12 @@ import queue
 import sys
 import threading
 import traceback
+import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from bot import browser_options, consult, new_output_path, parse_sheets_values, save_results
+from bot import browser_options, consult, find_form, form_diagnostic, new_output_path, parse_sheets_values, save_results
 from sheets_api import read_values, sheet_identity
 from playwright.sync_api import sync_playwright
 from fnmt import AUTH_ORIGINS, certificate_policy
@@ -71,7 +72,7 @@ class App:
                 self.settings.update(json.loads((STATE / 'settings.json').read_text(encoding='utf-8')))
             except (OSError, ValueError):
                 pass
-        root.title('Bot de subvenciones')
+        root.title('Bot de subvenciones 1.2 — revisión 4')
         root.geometry('940x870')
         root.minsize(880, 800)
         root.protocol('WM_DELETE_WINDOW', self.close)
@@ -187,21 +188,39 @@ class App:
                     page = context.pages[0] if context.pages else context.new_page()
                     page.goto(config['login_url'], wait_until='domcontentloaded')
                     self.events.put(('login', 'En Brave pulsa Entra y completa FNMT. Mantén Brave abierto; después pulsa «Ya veo el formulario FNMT».'))
-                    while not self.resume.wait(0.2):
+                    while True:
+                        while not self.resume.wait(0.2):
+                            if self.stop.is_set():
+                                return
+                            # Atiende las redirecciones y pestañas nuevas de Playwright.
+                            if context.pages:
+                                context.pages[0].wait_for_timeout(100)
+                        self.resume.clear()
                         if self.stop.is_set():
                             return
-                    if self.stop.is_set():
-                        return
-                    candidates = [p for p in context.pages if not p.is_closed() and p.url.split('?')[0].rstrip('/') == config['form_url'].rstrip('/')]
-                    if len(candidates) != 1:
-                        raise ValueError('No se encuentra el formulario autenticado. Completa FNMT y vuelve a ejecutar.')
-                    page = candidates[0]
+                        deadline = time.monotonic() + 10
+                        page = None
+                        while time.monotonic() < deadline and not self.stop.is_set():
+                            page = find_form(context, config['form_url'], config['selectors'])
+                            if page is not None:
+                                break
+                            if context.pages:
+                                context.pages[0].wait_for_timeout(200)
+                            else:
+                                raise RuntimeError('El navegador se ha cerrado. Vuelve a ejecutar el lote.')
+                        if self.stop.is_set():
+                            return
+                        if page is not None:
+                            break
+                        self.events.put(('log', form_diagnostic(context, config['selectors'])))
+                        self.events.put(('login', 'Todavía no detecto los campos de consulta en la ventana abierta por el bot. Mantengo Brave abierto: termina el acceso en esa ventana y vuelve a pulsar «Ya veo el formulario FNMT».'))
                     output = new_output_path(config['output_dir'])
                     results = []
                     diagnostic = None
                     for index, (number, dni, expediente, error) in enumerate(records, 1):
                         if self.stop.is_set():
                             break
+                        input_error = bool(error)
                         state = anomalies = documents = original = ''
                         if not error:
                             try:
@@ -217,6 +236,9 @@ class App:
                         self.events.put(('log', f'Fila {number}: {"ERROR" if error else state}'))
                         if error:
                             self.events.put(('log', 'Motivo: ' + error))
+                            if input_error:
+                                self.events.put(('log', f'Fila {number} omitida por datos incompletos en Sheets; continúo con la siguiente.'))
+                                continue
                             if diagnostic:
                                 self.events.put(('log', 'Diagnóstico técnico: ' + str(diagnostic)))
                             self.events.put(('log', 'Lote detenido por error; el Excel conserva las filas procesadas.'))

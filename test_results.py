@@ -3,10 +3,23 @@ import unittest
 from pathlib import Path
 
 from openpyxl import load_workbook
-from bot import parse_result, save_results
+from bot import parse_result, save_results, changed_result
 
 
 class ResultTests(unittest.TestCase):
+    def test_multiple_result_panels_preserve_status_anomalies_and_document_links(self):
+        static = {'text': 'Introdueixi les dades per a realitzar la consulta', 'links': []}
+        status = {'text': 'Estat: Pendent', 'links': []}
+        anomalies = {'text': 'Anomalies:\n- Document 2: Falta signatura',
+                     'links': [{'text': 'Document 2', 'href': 'https://example.com/doc2.pdf'}]}
+        text, links = changed_result([static, status, anomalies, status], [static])
+        result = parse_result(text, links)
+        self.assertEqual(result[0], 'Pendent')
+        self.assertIn('Falta signatura', result[1])
+        self.assertIn('doc2.pdf', result[2])
+        self.assertNotIn(static['text'], result[3])
+        self.assertEqual(result[3].count('Estat:'), 1)
+
     def test_not_found_is_search_result_not_empty_anomalies(self):
         state, anomalies, documents, original = parse_result("No s'ha trobat cap expedient amb aquestes dades")
         self.assertEqual(state, 'Expediente no encontrado')

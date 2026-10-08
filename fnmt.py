@@ -103,7 +103,13 @@ def certificate_policy(config, executable, log):
     path = roots[name] + r'\AutoSelectCertificateForUrls'
     added = []
     try:
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+        try:
+            policy_key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+        except PermissionError:
+            log('Windows impide configurar la selección automática FNMT. Continúo con selección manual del certificado en el navegador.')
+            yield
+            return
+        with policy_key as key:
             existing = {}
             for i in range(winreg.QueryInfoKey(key)[1]):
                 entry, value, _ = winreg.EnumValue(key, i)

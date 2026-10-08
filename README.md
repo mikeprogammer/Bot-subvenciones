@@ -29,7 +29,11 @@ Selecciona en la consola la pestaña del formulario. El programa muestra los con
 - `buscar`: botón «Cerca» con clase `p-button-success`.
 - `resultado`: bloque `.mt-3` cuyo contenido cambia tras la consulta; debe identificar exclusivamente el resultado.
 
-El estado se obtiene de `Estat:` o `Estado:` si existe esa etiqueta; en caso contrario se guarda «No indicado en el texto». Un párrafo que anuncia anomalías no se interpreta como estado administrativo. Las anomalías se separan por guiones de viñeta después de los dos puntos, manteniendo guiones internos como `DOC-123` o `informe-final.pdf`. Se numeran para relacionarlas con la columna de documentos. Se decodifican entidades HTML como `&#x20;` para el análisis, conservando el texto recibido en Texto original.
+Desde 1.3 el Excel tiene seis columnas: DNI, Nº EXPEDIENTE, Estado, Anomalías, Documentos referenciados y Fila origen. Omite filas sin DNI y las que no pudieron consultarse; los errores se comunican en los registros. El texto original se usa internamente para clasificar, pero no se exporta.
+
+Los estados son Anomalías (rojo), En espera (naranja) y Favorable (verde), con formato condicional en las columnas Estado y Anomalías. Las anomalías positivas tienen prioridad; los textos pendientes o provisionales no se consideran favorables. Sin anomalías, se muestra «El trámite está en espera» o «El trámite ha sido favorable». La consulta sin expediente encontrado se resume En espera y se aclara en la columna Anomalías. La clasificación resume el texto de respuesta.
+
+Las anomalías se separan por guiones de viñeta después de los dos puntos, manteniendo guiones internos como `DOC-123` o `informe-final.pdf`. Se numeran para relacionarlas con la columna de documentos. Se decodifican entidades HTML como `&#x20;` para el análisis.
 
 Las referencias a documentos se extraen primero de encabezados como `Document normalitzat 1: Sol·licitud:` o `Document 2: memòria resum de l'actuació:`. En estos casos se guarda el número y título del documento, manteniendo el motivo completo en Anomalias. También se reconocen menciones explícitas a documento/document, nombres de archivo o enlaces cuyo texto aparece en la anomalía. No se deduce un documento a partir del motivo de la anomalía. Si no se puede identificar, se indica «Sin documento identificable en el texto». No se descargan documentos. Si el documento se identifica por una tabla o código situado fuera de `.mt-3`, hará falta adaptar esa relación con un ejemplo real del formato.
 

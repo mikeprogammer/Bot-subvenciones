@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.formatting.rule import FormulaRule
 from playwright.sync_api import sync_playwright
 
 
@@ -114,20 +115,42 @@ def parse_sheets_values(values, config):
     for number, row in enumerate(values[1:], 2):
         if not any(str(value).strip() for value in row):
             continue
-        dni, expediente = (str(row[i]).strip() if i < len(row) else "" for i in indices)
+        dni = str(row[indices[0]]).strip() if indices[0] < len(row) else ''
+        if not dni:
+            continue
+        expediente = str(row[indices[1]]).strip() if indices[1] < len(row) else ''
         missing = [label for label, value in (('DNI', dni), ('número de expediente', expediente)) if not value]
         error = 'Falta ' + ' y '.join(missing) if missing else ''
         records.append((number, dni, expediente, error))
     return records
 
 
+def report_status(original, anomalies):
+    text = normalize(html.unescape(original))
+    no_anomalies = bool(re.search(r"\b(?:sense anomalies|sin anomalias|cap anomali\w*|ninguna anomalia|no hi ha anomalies|no s'han detectat anomalies|no se han detectado anomalias|no hay anomalias)\b", text))
+    if (re.search(r'\b(?:anomalies|anomalias)\b', text) and not no_anomalies
+            and not re.search(r'\b(?:anomalies|anomalias)\s*:\s*(?:cap|ninguna|sense|sin)\b', text)):
+        return 'Anomalías', anomalies
+    pending = bool(re.search(r'\b(?:pendent|pendiente|espera|proposta|propuesta|provisional)\b', text))
+    negative = bool(re.search(r'\b(?:desfavorable|denegad\w*|denegat\w*|no\s+(?:es\s+|ha\s+estat\s+)?favorable)\b', text))
+    favorable = bool(re.search(r'\b(?:favorable|concedid[ao]|concedit|concedida|atorgad[ao]|atorgat|aprovad[ao]|aprovat)\b', text))
+    if favorable and not pending and not negative:
+        return 'Favorable', 'El trámite ha sido favorable'
+    detail = ' (expediente no encontrado)' if "no s'ha trobat cap expedient" in text else ''
+    return 'En espera', 'El trámite está en espera' + detail
+
+
 def save_results(path, rows):
     book = Workbook()
     sheet = book.active
     sheet.title = "Resultados"
-    sheet.append(["DNI", "Nº EXPEDIENTE", "Estado", "Anomalias", "Documentos referenciados", "Texto original", "Error de consulta", "Fila origen"])
+    sheet.append(["DNI", "Nº EXPEDIENTE", "Estado", "Anomalías", "Documentos referenciados", "Fila origen"])
     for row in rows:
-        sheet.append(row)
+        dni, expediente, state, anomalies, documents, original, error, source = row
+        if not dni or error:
+            continue
+        state, anomalies = report_status(original, anomalies)
+        sheet.append((dni, expediente, state, anomalies, documents, source))
         # Guarda todo texto literalmente, aunque comience con '='.
         for cell in sheet[sheet.max_row]:
             if isinstance(cell.value, str):
@@ -135,12 +158,21 @@ def save_results(path, rows):
     for cell in sheet[1]:
         cell.font = Font(color="FFFFFF", bold=True)
         cell.fill = PatternFill("solid", fgColor="17365D")
-    for column, width in zip("ABCDEFGH", (16, 27, 30, 70, 60, 70, 50, 14)):
+    for column, width in zip("ABCDEF", (17, 28, 18, 75, 48, 14)):
         sheet.column_dimensions[column].width = width
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
     sheet.freeze_panes = "A2"
+    sheet.sheet_view.showGridLines = False
+    sheet.row_dimensions[1].height = 28
+    for index in range(2, sheet.max_row + 1):
+        sheet.row_dimensions[index].height = max(32, min(180, 16 * (str(sheet.cell(index, 4).value).count('\n') + 2)))
+    if sheet.max_row > 1:
+        for status, color, foreground in (('Anomalías', 'FCE4E4', '9C0006'), ('En espera', 'FCE4D6', '9C5700'), ('Favorable', 'E2EFDA', '375623')):
+            sheet.conditional_formatting.add(f'C2:D{sheet.max_row}', FormulaRule(
+                formula=[f'$C2="{status}"'], fill=PatternFill('solid', fgColor=color),
+                font=Font(color=foreground), stopIfTrue=True))
     sheet.auto_filter.ref = sheet.dimensions
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.stem + ".tmp.xlsx")

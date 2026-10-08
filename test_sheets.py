@@ -10,9 +10,9 @@ class SheetsInputTests(unittest.TestCase):
     def test_missing_input_identifies_column_without_copying_previous_person(self):
         rows = parse_sheets_values([['DNI', 'Nº EXPEDIENTE'], ['001A', 'EXP1'],
                                    ['', 'EXP2'], ['002B'], ['003C', 'EXP3']], self.config)
-        self.assertEqual(rows[1], (3, '', 'EXP2', 'Falta DNI'))
-        self.assertEqual(rows[2], (4, '002B', '', 'Falta número de expediente'))
-        self.assertEqual(rows[3], (5, '003C', 'EXP3', ''))
+        self.assertEqual(rows[1], (4, '002B', '', 'Falta número de expediente'))
+        self.assertEqual(rows[2], (5, '003C', 'EXP3', ''))
+        self.assertEqual(len(rows), 3)
 
     def test_tab_url(self):
         url = "https://docs.google.com/spreadsheets/d/abc_123/edit#gid=42"
@@ -29,9 +29,9 @@ class SheetsInputTests(unittest.TestCase):
     def test_identifiers_blanks_and_original_row_numbers(self):
         rows = parse_sheets_csv('\ufeffDNI,Nº EXPEDIENTE,Nota\r\n00123456A,"0001,2026",x\r\n,,\r\n,0002,x\r\n12345678Z\r\n', self.config)
         self.assertEqual(rows[0], (2, "00123456A", "0001,2026", ""))
-        self.assertEqual(rows[1][0], 4)
+        self.assertEqual(rows[1][0], 5)
         self.assertTrue(rows[1][3])
-        self.assertTrue(rows[2][3])
+        self.assertEqual(len(rows), 2)
 
     def test_missing_and_duplicate_headers(self):
         for text in ("DNI,Otro\n", "DNI,DNI,Nº EXPEDIENTE\n"):

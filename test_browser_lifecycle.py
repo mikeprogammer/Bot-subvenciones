@@ -34,9 +34,9 @@ class BrowserLifecycleTests(unittest.TestCase):
                 app.worker(config, 'brave.exe', False)
             self.assertEqual(consult.call_count, 2)
             book = load_workbook(next(Path(directory).glob('*.xlsx')))
-            self.assertEqual(book.active.max_row, 4)
-            self.assertEqual(book.active.cell(3, 7).value, 'Falta DNI')
-            self.assertEqual(book.active.cell(4, 1).value, 'B')
+            self.assertEqual(book.active.max_row, 3)
+            self.assertEqual(book.active.cell(3, 1).value, 'B')
+            self.assertEqual(book.active.cell(3, 6).value, 4)
             book.close()
 
     def test_hidden_dni_before_unchecking_titular_does_not_block_form(self):

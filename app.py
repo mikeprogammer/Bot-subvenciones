@@ -66,13 +66,14 @@ class App:
         self.resume = threading.Event()
         self.running = False
         self.last_output = None
+        self.log_path = None
         self.settings = dict(DEFAULTS)
         if (STATE / 'settings.json').exists():
             try:
                 self.settings.update(json.loads((STATE / 'settings.json').read_text(encoding='utf-8')))
             except (OSError, ValueError):
                 pass
-        root.title('Bot de subvenciones 1.2 — revisión 4')
+        root.title('Bot de subvenciones 1.3')
         root.geometry('940x870')
         root.minsize(880, 800)
         root.protocol('WM_DELETE_WINDOW', self.close)
@@ -164,6 +165,10 @@ class App:
             messagebox.showerror('Revisa la configuración', str(exc))
             return
         self.running = True
+        self.log_path = None
+        if not check_only:
+            config['run_output'] = str(new_output_path(config['output_dir']))
+            self.log_path = Path(config['run_output']).with_suffix('.log')
         self.stop.clear()
         self.resume.clear()
         for field in [*self.fields, self.check, self.run]:
@@ -214,7 +219,7 @@ class App:
                             break
                         self.events.put(('log', form_diagnostic(context, config['selectors'])))
                         self.events.put(('login', 'Todavía no detecto los campos de consulta en la ventana abierta por el bot. Mantengo Brave abierto: termina el acceso en esa ventana y vuelve a pulsar «Ya veo el formulario FNMT».'))
-                    output = new_output_path(config['output_dir'])
+                    output = Path(config['run_output']) if config.get('run_output') else new_output_path(config['output_dir'])
                     results = []
                     diagnostic = None
                     for index, (number, dni, expediente, error) in enumerate(records, 1):
@@ -262,6 +267,14 @@ class App:
         while not self.events.empty():
             kind, value = self.events.get()
             if kind in ('log', 'login', 'error', 'output'):
+                if self.log_path:
+                    try:
+                        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                        with self.log_path.open('a', encoding='utf-8') as logfile:
+                            logfile.write(str(value) + '\n')
+                    except OSError:
+                        # El registro en pantalla sigue disponible si falla la carpeta.
+                        pass
                 self.log.configure(state='normal')
                 self.log.insert('end', str(value) + '\n')
                 self.log.see('end')

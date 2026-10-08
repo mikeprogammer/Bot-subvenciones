@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "app.py", line 295, in main
-  File "bot.py", line 270, in consult
-TimeoutError: No apareció un resultado nuevo tras buscar

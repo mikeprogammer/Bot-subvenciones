@@ -46,3 +46,23 @@ Si la primera fila registra `TargetClosedError`, la conexión con la pestaña o 
 La versión `BotSubvenciones_1_1.exe` conserva la pestaña autenticada y usa Neteja para limpiar el resultado entre filas. Muestra el motivo de error en la interfaz y guarda un archivo `.diagnostico.txt` junto al Excel cuando falla una consulta. El diagnóstico puede contener rutas y detalles de sesión; revísalo antes de compartirlo. Mantén abierta la ventana automatizada durante todo el lote.
 
 La compilación final 1.1 pasó una prueba de cinco consultas contra un formulario local en Brave, ejecutada desde una carpeta separada. El proceso terminó con código 0 y mantuvo la pestaña abierta durante las consultas. Las 17 pruebas locales pasan. Esta comprobación no usa FNMT ni la intranet y no determina todavía por qué Brave se cerró solo en el caso comunicado.
+
+## Selección automática FNMT — versión 1.2
+
+La opción **Seleccionar automáticamente FNMT de persona física** está activada por defecto. Busca certificados del usuario actual y del equipo en Windows, con clave privada, dentro de sus fechas de vigencia y con la política FNMT personal `1.3.6.1.4.1.5734.3.10.1` (o la antigua Clase 2 `1.3.6.1.4.1.5734.3.5`). Excluye los certificados de representante y los caducados. No comprueba revocación; el servicio y el navegador validan el certificado durante el acceso.
+
+Si solo hay uno, lo detecta automáticamente. Si hay varios, muestra sus nombres, fechas y huellas: copia la huella elegida al campo **Huella FNMT**. Si dos certificados vigentes tienen el mismo titular y emisor, la política del navegador no puede distinguirlos; usa la selección manual desmarcando la opción.
+
+Antes de abrir Brave o Chrome, añade reglas `AutoSelectCertificateForUrls` al registro del usuario actual, filtradas por el nombre exacto del titular y del emisor. Usa los orígenes HTTPS de acceso Cl@ve indicados en la interfaz, sin comodines. Los valores iniciales son `https://se-pasarela-ident.clave.gob.es` y `https://se-pasarela-identclave.gob.es`; si el selector de certificados muestra otro dominio, sustituye estos valores por el origen exacto mostrado y vuelve a ejecutar. No está verificado qué origen usa actualmente el acceso CAIB en la sesión del usuario.
+
+Pulsa **Entra** y el acceso con certificado como antes. La selección del certificado se hará automáticamente si el navegador admite y aplica la regla. Un PIN o una confirmación de uso de la clave privada pueden seguir requiriendo intervención. Pulsa **Ya veo el formulario FNMT** cuando aparezca el formulario.
+
+La regla afecta a los perfiles de ese navegador del usuario mientras se ejecuta el lote; el programa retira únicamente sus entradas al terminar, incluso si falla el lanzamiento. No modifica las reglas existentes ni exporta claves privadas. Un cierre forzado del proceso o del equipo puede impedir la retirada: en ese caso revisa `HKCU\Software\Policies\BraveSoftware\Brave\AutoSelectCertificateForUrls` (o `Google\Chrome`). Las políticas administradas del equipo pueden prevalecer; se pueden revisar en `brave://policy` o `chrome://policy`.
+
+Para otro ordenador sigue siendo necesario tener instalado allí el certificado personal con su clave privada. El EXE no lo transporta.
+
+Referencias: [políticas de Brave](https://support.brave.app/hc/en-us/articles/360039248271-Group-Policy), [definición oficial de Chromium](https://raw.githubusercontent.com/chromium/chromium/main/components/policy/resources/templates/policy_definitions/ContentSettings/AutoSelectCertificateForUrls.yaml), [tipos de certificados FNMT por OID](https://www.sede.fnmt.gob.es/en/preguntas-frecuentes/-/asset_publisher/5a9kmeLaGgXw/content/1669-que-es-eso-de-los-oids-).
+
+Validación: 22 pruebas locales, incluidas exclusión de representantes y caducados, rechazo de selección ambigua, filtros por titular/emisor y retirada de reglas sin borrar las existentes. En la sesión de Windows del usuario se detectaron dos certificados personales vigentes, con titulares/emisores distintos; será necesario elegir una huella una vez. La autenticación FNMT real de la versión 1.2 queda pendiente de probar.
+
+El EXE 1.2 pasó la comprobación de arranque con código 0: interfaz, Playwright, Google API, zona horaria y lectura del almacén Windows. El detector empaquetado también encontró los dos certificados personales.

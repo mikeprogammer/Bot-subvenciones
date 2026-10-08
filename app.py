@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from bot import browser_options, consult, new_output_path, parse_sheets_values, save_results
 from sheets_api import read_values, sheet_identity
 from playwright.sync_api import sync_playwright
+from fnmt import AUTH_ORIGINS, certificate_policy
 
 
 def friendly_error(exc):
@@ -30,6 +31,7 @@ DEFAULTS = {
     'login_url': 'https://intranet.caib.es/subvenfront/',
     'form_url': 'https://intranet.caib.es/subvenfront/consulta-estado-expediente-subvencion',
     'timeout_ms': 30000, 'delay_seconds': 2,
+    'auto_fnmt': True, 'fnmt_thumbprint': '', 'fnmt_origins': AUTH_ORIGINS,
     'selectors': {
         'titular': "input:is(#titularExpediente, [name='titularExpediente'])",
         'dni': "input:is(#titularDocumentoNumero, [name='titularDocumentoNumero'])",
@@ -70,8 +72,8 @@ class App:
             except (OSError, ValueError):
                 pass
         root.title('Bot de subvenciones')
-        root.geometry('880x710')
-        root.minsize(760, 620)
+        root.geometry('940x870')
+        root.minsize(880, 800)
         root.protocol('WM_DELETE_WINDOW', self.close)
         frame = ttk.Frame(root, padding=22)
         frame.pack(fill='both', expand=True)
@@ -86,6 +88,8 @@ class App:
             ('output_dir', 'Carpeta de resultados', 'dir'),
             ('dni_column', 'Columna DNI', None),
             ('expediente_column', 'Columna de expediente', None),
+            ('fnmt_thumbprint', 'Huella FNMT: dejar vacía para detectar el único certificado personal vigente', None),
+            ('fnmt_origins', 'Dominios del acceso con certificado (HTTPS, separados por comas)', None),
         ):
             ttk.Label(frame, text=label).pack(anchor='w', pady=(5, 2))
             line = ttk.Frame(frame)
@@ -99,6 +103,11 @@ class App:
                 button = ttk.Button(line, text='Examinar…', command=lambda k=key, b=browse: self.browse(k, b))
                 button.pack(side='right', padx=(6, 0))
                 self.fields.append(button)
+        self.auto_fnmt = tk.BooleanVar(value=self.settings['auto_fnmt'])
+        cert_option = ttk.Checkbutton(frame, text='Seleccionar automáticamente FNMT de persona física', variable=self.auto_fnmt)
+        cert_option.pack(anchor='w', pady=(8, 0))
+        self.fields.append(cert_option)
+        ttk.Label(frame, text='Regla temporal para este usuario de Windows: afecta a este navegador durante el lote. No exporta la clave privada.', wraplength=880).pack(anchor='w')
         actions = ttk.Frame(frame)
         actions.pack(fill='x', pady=15)
         self.check = ttk.Button(actions, text='Probar lectura de Sheets', command=lambda: self.start(True))
@@ -128,6 +137,7 @@ class App:
     def config(self):
         config = dict(self.settings)
         config.update({k: v.get().strip() for k, v in self.variables.items()})
+        config['auto_fnmt'] = self.auto_fnmt.get()
         sheet_identity(config['sheets_url'])
         client = Path(config['oauth_credentials'])
         if not client.is_file():
@@ -170,7 +180,7 @@ class App:
             self.events.put(('log', f'Sheets API: {len(records)} filas leídas.'))
             if check_only or self.stop.is_set():
                 return
-            with sync_playwright() as playwright:
+            with certificate_policy(config, executable, lambda msg: self.events.put(('log', msg))), sync_playwright() as playwright:
                 context = playwright.chromium.launch_persistent_context(config['browser_profile'], **browser_options(config))
                 try:
                     context.set_default_timeout(config['timeout_ms'])
@@ -305,14 +315,16 @@ def main():
         root.withdraw()
         import certifi
         import googleapiclient.discovery
+        from fnmt import personal_certificates
         from zoneinfo import ZoneInfo
         assert Path(certifi.where()).exists()
         assert ZoneInfo('Europe/Madrid')
+        certificates = personal_certificates()
         with sync_playwright() as p:
             assert p.chromium
         root.update()
         target = Path(sys.argv[sys.argv.index('--self-test') + 1])
-        target.write_text(json.dumps({'gui': 'ok', 'playwright': 'ok', 'google_api': 'ok', 'timezone': 'ok'}), encoding='utf-8')
+        target.write_text(json.dumps({'gui': 'ok', 'playwright': 'ok', 'google_api': 'ok', 'timezone': 'ok', 'fnmt_store': 'ok', 'personal_certificates': len(certificates)}), encoding='utf-8')
         root.destroy()
         return
     root.mainloop()

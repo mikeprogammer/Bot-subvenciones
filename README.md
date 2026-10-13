@@ -31,6 +31,8 @@ Selecciona en la consola la pestaña del formulario. El programa muestra los con
 
 Desde 1.3 el Excel tiene seis columnas: DNI, Nº EXPEDIENTE, Estado, Anomalías, Documentos referenciados y Fila origen. Omite filas sin DNI y las que no pudieron consultarse; los errores se comunican en los registros. El texto original se usa internamente para clasificar, pero no se exporta.
 
+Desde 1.4 se puede indicar **Fila de encabezados** en la interfaz. Pon 2 si hay un título en la primera fila y los nombres DNI y Nº EXPEDIENTE están en la segunda. El valor predeterminado es 1 y se guarda junto a los demás ajustes. Los datos se leen desde la fila siguiente y Fila origen conserva la numeración de la hoja. En configuración JSON se utiliza `header_row`.
+
 Los estados son Anomalías (rojo), En espera (naranja) y Favorable (verde), con formato condicional en las columnas Estado y Anomalías. Las anomalías positivas tienen prioridad; los textos pendientes o provisionales no se consideran favorables. Sin anomalías, se muestra «El trámite está en espera» o «El trámite ha sido favorable». La consulta sin expediente encontrado se resume En espera y se aclara en la columna Anomalías. La clasificación resume el texto de respuesta.
 
 Las anomalías se separan por guiones de viñeta después de los dos puntos, manteniendo guiones internos como `DOC-123` o `informe-final.pdf`. Se numeran para relacionarlas con la columna de documentos. Se decodifican entidades HTML como `&#x20;` para el análisis.

@@ -11,7 +11,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from bot import browser_options, consult, find_form, form_diagnostic, new_output_path, parse_sheets_values, save_results
+from bot import browser_options, consult, find_form, form_diagnostic, header_row, new_output_path, parse_sheets_values, save_results
 from sheets_api import read_values, sheet_identity
 from playwright.sync_api import sync_playwright
 from fnmt import AUTH_ORIGINS, certificate_policy
@@ -29,6 +29,7 @@ DEFAULTS = {
     'sheets_url': '', 'oauth_credentials': '', 'browser_executable': '',
     'output_dir': str(Path.home() / 'Documents' / 'ConsultasSubvenciones'),
     'dni_column': 'DNI', 'expediente_column': 'Nº EXPEDIENTE',
+    'header_row': 1,
     'login_url': 'https://intranet.caib.es/subvenfront/',
     'form_url': 'https://intranet.caib.es/subvenfront/consulta-estado-expediente-subvencion',
     'timeout_ms': 30000, 'delay_seconds': 2,
@@ -73,8 +74,8 @@ class App:
                 self.settings.update(json.loads((STATE / 'settings.json').read_text(encoding='utf-8')))
             except (OSError, ValueError):
                 pass
-        root.title('Bot de subvenciones 1.3')
-        root.geometry('940x870')
+        root.title('Bot de subvenciones 1.4')
+        root.geometry('940x920')
         root.minsize(880, 800)
         root.protocol('WM_DELETE_WINDOW', self.close)
         frame = ttk.Frame(root, padding=22)
@@ -90,6 +91,7 @@ class App:
             ('output_dir', 'Carpeta de resultados', 'dir'),
             ('dni_column', 'Columna DNI', None),
             ('expediente_column', 'Columna de expediente', None),
+            ('header_row', 'Fila de encabezados DNI y Nº EXPEDIENTE (1, 2, 3…)', None),
             ('fnmt_thumbprint', 'Huella FNMT: dejar vacía para detectar el único certificado personal vigente', None),
             ('fnmt_origins', 'Dominios del acceso con certificado (HTTPS, separados por comas)', None),
         ):
@@ -139,6 +141,7 @@ class App:
     def config(self):
         config = dict(self.settings)
         config.update({k: v.get().strip() for k, v in self.variables.items()})
+        config['header_row'] = header_row(config)
         config['auto_fnmt'] = self.auto_fnmt.get()
         sheet_identity(config['sheets_url'])
         client = Path(config['oauth_credentials'])

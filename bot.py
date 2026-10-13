@@ -62,7 +62,10 @@ def read_rows(path, config):
     book = load_workbook(path, read_only=True, data_only=False)
     try:
         sheet = book[config["sheet"]] if config.get("sheet") else book.active
-        header = next(sheet.iter_rows(min_row=1, max_row=1))
+        first = header_row(config)
+        if first > sheet.max_row:
+            raise ValueError(f'La fila de encabezados {first} está fuera de la hoja.')
+        header = next(sheet.iter_rows(min_row=first, max_row=first))
         names = [normalize(c.value) for c in header]
         indices = []
         for key in ("dni_column", "expediente_column"):
@@ -71,7 +74,7 @@ def read_rows(path, config):
                 raise ValueError(f"Columna ausente o duplicada: {config[key]}")
             indices.append(names.index(name))
         rows = []
-        for number, cells in enumerate(sheet.iter_rows(min_row=2), 2):
+        for number, cells in enumerate(sheet.iter_rows(min_row=first + 1), first + 1):
             if all(c.value is None for c in cells):
                 continue
             try:
@@ -101,18 +104,28 @@ def parse_sheets_csv(text, config):
     return parse_sheets_values(values, config)
 
 
+def header_row(config):
+    value = str(config.get('header_row', 1)).strip()
+    if not value.isdecimal() or int(value) < 1:
+        raise ValueError('La fila de encabezados debe ser un número entero mayor o igual que 1.')
+    return int(value)
+
+
 def parse_sheets_values(values, config):
     if not values:
         raise ValueError("La pestaña de Sheets está vacía")
-    header = [normalize(value) for value in values[0]]
+    first = header_row(config)
+    if first > len(values):
+        raise ValueError(f'La fila de encabezados {first} está fuera de la hoja.')
+    header = [normalize(value) for value in values[first - 1]]
     indices = []
     for key in ("dni_column", "expediente_column"):
         name = normalize(config[key])
         if header.count(name) != 1:
-            raise ValueError(f"Columna ausente o duplicada en Sheets: {config[key]}")
+            raise ValueError(f"Columna ausente o duplicada en la fila {first} de Sheets: {config[key]}")
         indices.append(header.index(name))
     records = []
-    for number, row in enumerate(values[1:], 2):
+    for number, row in enumerate(values[first:], first + 1):
         if not any(str(value).strip() for value in row):
             continue
         dni = str(row[indices[0]]).strip() if indices[0] < len(row) else ''

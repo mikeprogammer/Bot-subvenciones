@@ -5,6 +5,7 @@
   "sheets_url": "",
   "dni_column": "DNI",
   "expediente_column": "Nº EXPEDIENTE",
+  "header_row": 1,
   "timeout_ms": 30000,
   "delay_seconds": 2,
   "selectors": {

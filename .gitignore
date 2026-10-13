@@ -12,3 +12,20 @@ dist/
 *.spec
 outputs/
 *.exe
+
+# Credenciales, certificados, sesiones y diagnósticos locales
+.env
+.env.*
+!.env.example
+credentials*.json
+client_secret*.json
+token.json
+token*.json
+settings.json
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.log
+*.diagnostico.txt

@@ -79,12 +79,25 @@ class FnmtTests(unittest.TestCase):
                 pass
             read.assert_not_called()
 
-    def test_denied_registry_continues_with_manual_certificate(self):
+    def test_denied_registry_stops_before_browser(self):
         registry = MagicMock()
         registry.CreateKeyEx.side_effect = PermissionError(5, 'Acceso denegado')
         log = MagicMock()
         with patch.dict('sys.modules', {'winreg': registry}), patch('fnmt.personal_certificates', return_value=[decode_certificate(self.row())]):
-            with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'brave.exe', log):
-                pass
-        self.assertIn('selección manual', log.call_args.args[0])
+            with self.assertRaisesRegex(PermissionError, 'No se iniciará el lote'):
+                with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'brave.exe', log):
+                    self.fail('No debe continuar sin selección automática')
         registry.SetValueEx.assert_not_called()
+
+
+    def test_existing_machine_policy_needs_no_user_write(self):
+        cert = decode_certificate(self.row())
+        registry = MagicMock()
+        rule = rules_for(cert, 'https://auth.example.com')[0]
+        registry.QueryInfoKey.return_value = (0, 1, 0)
+        registry.EnumValue.return_value = ('1', rule, 1)
+        with patch.dict('sys.modules', {'winreg': registry}), patch('fnmt.personal_certificates', return_value=[cert]):
+            with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'brave.exe', lambda msg: None):
+                pass
+        registry.CreateKeyEx.assert_not_called()
+        registry.DeleteValue.assert_not_called()

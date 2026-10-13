@@ -40,7 +40,7 @@ def browser_options(config):
     ]
     for candidate in candidates:
         if candidate.is_file():
-            return {"executable_path": str(candidate.resolve()), "headless": False}
+            return {"executable_path": str(candidate.resolve()), "headless": False, "chromium_sandbox": True}
     raise FileNotFoundError("No se encuentra Brave. Configura browser_executable con la ruta a brave.exe")
 
 

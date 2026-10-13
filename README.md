@@ -1,5 +1,7 @@
 # Bot de consulta de subvenciones
 
+Versión 1.5: el código fuente actual está en la raíz del proyecto. El ejecutable se entrega únicamente en `dist/BotSubvenciones_1_5.exe`. La interfaz `app.py` automatiza Entra y el acceso FNMT con el certificado instalado en Windows; si hay varios titulares hay que elegir uno una vez. Consulta `dist/LEEME_1_5.md` para las comprobaciones y limitaciones. El modo de consola `bot.py` conserva su acceso manual.
+
 Para utilizar la interfaz sin instalar Python, consulta [EXE_PORTABLE.md](EXE_PORTABLE.md). El ejecutable permite seleccionar el JSON OAuth, la hoja de Sheets, Brave, las columnas y la carpeta de resultados.
 
 Primera versión para Windows, Python 3.10+ y Brave instalado. Lee una pestaña de Google Sheets o un Excel local `.xlsx`, consulta las filas en la intranet y guarda DNI, expediente, estado, anomalías y documentos referenciados en un Excel local. Conserva el texto original y añade columnas para errores técnicos y fila de origen. Guarda después de cada consulta.

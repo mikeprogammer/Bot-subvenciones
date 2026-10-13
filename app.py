@@ -14,7 +14,8 @@ from tkinter import filedialog, messagebox, ttk
 from bot import browser_options, consult, find_form, form_diagnostic, header_row, new_output_path, parse_sheets_values, save_results
 from sheets_api import read_values, sheet_identity
 from playwright.sync_api import sync_playwright
-from fnmt import AUTH_ORIGINS, certificate_policy
+from fnmt import AUTH_ORIGINS, certificate_policy, personal_certificates, install_machine_policy
+from auto_login import automatic_login
 
 
 def friendly_error(exc):
@@ -24,7 +25,7 @@ def friendly_error(exc):
                 'el diagnóstico guardado junto al Excel.')
     return type(exc).__name__ + ': ' + str(exc).splitlines()[0][:500]
 
-STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'BotSubvenciones'
+STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'BotSubvenciones_1_5'
 DEFAULTS = {
     'sheets_url': '', 'oauth_credentials': '', 'browser_executable': '',
     'output_dir': str(Path.home() / 'Documents' / 'ConsultasSubvenciones'),
@@ -74,8 +75,10 @@ class App:
                 self.settings.update(json.loads((STATE / 'settings.json').read_text(encoding='utf-8')))
             except (OSError, ValueError):
                 pass
-        root.title('Bot de subvenciones 1.4')
-        root.geometry('940x920')
+        if self.settings.get('fnmt_origins') == 'https://se-pasarela-ident.clave.gob.es,https://se-pasarela-identclave.gob.es':
+            self.settings['fnmt_origins'] = AUTH_ORIGINS
+        root.title('Bot de subvenciones 1.5')
+        root.geometry('940x980')
         root.minsize(880, 800)
         root.protocol('WM_DELETE_WINDOW', self.close)
         frame = ttk.Frame(root, padding=22)
@@ -92,7 +95,6 @@ class App:
             ('dni_column', 'Columna DNI', None),
             ('expediente_column', 'Columna de expediente', None),
             ('header_row', 'Fila de encabezados DNI y Nº EXPEDIENTE (1, 2, 3…)', None),
-            ('fnmt_thumbprint', 'Huella FNMT: dejar vacía para detectar el único certificado personal vigente', None),
             ('fnmt_origins', 'Dominios del acceso con certificado (HTTPS, separados por comas)', None),
         ):
             ttk.Label(frame, text=label).pack(anchor='w', pady=(5, 2))
@@ -107,11 +109,20 @@ class App:
                 button = ttk.Button(line, text='Examinar…', command=lambda k=key, b=browse: self.browse(k, b))
                 button.pack(side='right', padx=(6, 0))
                 self.fields.append(button)
-        self.auto_fnmt = tk.BooleanVar(value=self.settings['auto_fnmt'])
-        cert_option = ttk.Checkbutton(frame, text='Seleccionar automáticamente FNMT de persona física', variable=self.auto_fnmt)
-        cert_option.pack(anchor='w', pady=(8, 0))
-        self.fields.append(cert_option)
-        ttk.Label(frame, text='Regla temporal para este usuario de Windows: afecta a este navegador durante el lote. No exporta la clave privada.', wraplength=880).pack(anchor='w')
+        self.certificates = {}
+        self.certificate_label = tk.StringVar(value='Automático: único FNMT personal vigente')
+        ttk.Label(frame, text='Certificado FNMT instalado en Windows').pack(anchor='w', pady=(8, 2))
+        cert_line = ttk.Frame(frame)
+        cert_line.pack(fill='x')
+        self.certificate_picker = ttk.Combobox(cert_line, textvariable=self.certificate_label, state='readonly')
+        self.certificate_picker.pack(side='left', fill='x', expand=True)
+        detect = ttk.Button(cert_line, text='Detectar certificados', command=self.detect_certificates)
+        detect.pack(side='right', padx=(6, 0))
+        self.fields.append(detect)
+        setup = ttk.Button(frame, text='Configurar FNMT (administrador)', command=self.setup_certificate_policy)
+        setup.pack(anchor='w', pady=(5, 0))
+        self.fields.append(setup)
+        ttk.Label(frame, text='No requiere PFX ni contraseña. Si hay varios certificados, elige el titular una vez; el bot recordará la elección.', wraplength=880).pack(anchor='w')
         actions = ttk.Frame(frame)
         actions.pack(fill='x', pady=15)
         self.check = ttk.Button(actions, text='Probar lectura de Sheets', command=lambda: self.start(True))
@@ -119,7 +130,7 @@ class App:
         self.run = ttk.Button(actions, text='Consultar y crear Excel', command=lambda: self.start(False))
         self.run.pack(side='left', padx=8)
         self.continue_button = ttk.Button(actions, text='Ya veo el formulario FNMT', command=self.resume.set, state='disabled')
-        self.continue_button.pack(side='left')
+        # El formulario se detecta automáticamente.
         self.cancel = ttk.Button(actions, text='Detener', command=self.cancel_run, state='disabled')
         self.cancel.pack(side='right')
         self.status = tk.StringVar(value='Selecciona el JSON de escritorio y la hoja para empezar.')
@@ -131,6 +142,35 @@ class App:
         self.open_result = ttk.Button(frame, text='Abrir último Excel', command=self.open_output, state='disabled')
         self.open_result.pack(anchor='e', pady=(8, 0))
         root.after(100, self.poll)
+        root.after(200, self.detect_certificates)
+
+    def setup_certificate_policy(self):
+        if not messagebox.askyesno('Configurar FNMT', 'Se instalará una regla persistente para el certificado y los dominios indicados en este navegador para todos los usuarios del equipo. Windows pedirá permiso de administrador. No se exporta la clave privada. ¿Continuar?'):
+            return
+        config = {'fnmt_origins': self.variables['fnmt_origins'].get(),
+                  'fnmt_thumbprint': self.certificates.get(self.certificate_label.get(), self.settings.get('fnmt_thumbprint', ''))}
+        try:
+            executable = browser_options({'browser_executable': self.variables['browser_executable'].get()})['executable_path']
+        except Exception as exc:
+            messagebox.showerror('Configurar FNMT', str(exc))
+            return
+        def install():
+            try:
+                install_machine_policy(config, executable)
+                self.events.put(('log', 'FNMT configurado. Cierra las ventanas de este navegador antes de iniciar el siguiente lote.'))
+            except Exception as exc:
+                self.events.put(('error', str(exc)))
+        threading.Thread(target=install, daemon=True).start()
+
+    def detect_certificates(self):
+        def read():
+            try:
+                items = personal_certificates()
+                self.events.put(('certificates', items))
+                self.events.put(('log', f'FNMT personales vigentes detectados: {len(items)}.'))
+            except Exception:
+                self.events.put(('log', 'No se pudo leer el almacén Windows. Se volverá a comprobar al consultar.'))
+        threading.Thread(target=read, daemon=True).start()
 
     def browse(self, key, kind):
         path = filedialog.askdirectory() if kind == 'dir' else filedialog.askopenfilename(
@@ -142,7 +182,8 @@ class App:
         config = dict(self.settings)
         config.update({k: v.get().strip() for k, v in self.variables.items()})
         config['header_row'] = header_row(config)
-        config['auto_fnmt'] = self.auto_fnmt.get()
+        config['auto_fnmt'] = True
+        config['fnmt_thumbprint'] = self.certificates.get(self.certificate_label.get(), self.settings.get('fnmt_thumbprint', ''))
         sheet_identity(config['sheets_url'])
         client = Path(config['oauth_credentials'])
         if not client.is_file():
@@ -168,6 +209,7 @@ class App:
             messagebox.showerror('Revisa la configuración', str(exc))
             return
         self.running = True
+        self.certificate_picker.configure(state='disabled')
         self.log_path = None
         if not check_only:
             config['run_output'] = str(new_output_path(config['output_dir']))
@@ -195,33 +237,9 @@ class App:
                     context.set_default_timeout(config['timeout_ms'])
                     page = context.pages[0] if context.pages else context.new_page()
                     page.goto(config['login_url'], wait_until='domcontentloaded')
-                    self.events.put(('login', 'En Brave pulsa Entra y completa FNMT. Mantén Brave abierto; después pulsa «Ya veo el formulario FNMT».'))
-                    while True:
-                        while not self.resume.wait(0.2):
-                            if self.stop.is_set():
-                                return
-                            # Atiende las redirecciones y pestañas nuevas de Playwright.
-                            if context.pages:
-                                context.pages[0].wait_for_timeout(100)
-                        self.resume.clear()
-                        if self.stop.is_set():
-                            return
-                        deadline = time.monotonic() + 10
-                        page = None
-                        while time.monotonic() < deadline and not self.stop.is_set():
-                            page = find_form(context, config['form_url'], config['selectors'])
-                            if page is not None:
-                                break
-                            if context.pages:
-                                context.pages[0].wait_for_timeout(200)
-                            else:
-                                raise RuntimeError('El navegador se ha cerrado. Vuelve a ejecutar el lote.')
-                        if self.stop.is_set():
-                            return
-                        if page is not None:
-                            break
-                        self.events.put(('log', form_diagnostic(context, config['selectors'])))
-                        self.events.put(('login', 'Todavía no detecto los campos de consulta en la ventana abierta por el bot. Mantengo Brave abierto: termina el acceso en esa ventana y vuelve a pulsar «Ya veo el formulario FNMT».'))
+                    page = automatic_login(context, config, self.stop, lambda msg: self.events.put(('log', msg)))
+                    if page is None:
+                        return
                     output = Path(config['run_output']) if config.get('run_output') else new_output_path(config['output_dir'])
                     results = []
                     diagnostic = None
@@ -294,7 +312,16 @@ class App:
                 self.open_result.configure(state='normal')
             elif kind == 'error':
                 messagebox.showerror('No se pudo completar', value)
+            elif kind == 'certificates':
+                self.certificates = {f"{c['subject']} — hasta {c['expires']} [{c['thumbprint'][-8:]}]": c['thumbprint'] for c in value}
+                self.certificate_picker['values'] = list(self.certificates)
+                chosen = next((label for label, fingerprint in self.certificates.items() if fingerprint == self.settings.get('fnmt_thumbprint')), None)
+                if chosen or len(self.certificates) == 1:
+                    self.certificate_label.set(chosen or next(iter(self.certificates)))
+                elif self.certificates:
+                    self.certificate_label.set('Selecciona el titular que debe usar el bot')
             elif kind == 'done':
+                self.certificate_picker.configure(state='readonly')
                 self.running = False
                 for field in [*self.fields, self.check, self.run]:
                     field.configure(state='normal')

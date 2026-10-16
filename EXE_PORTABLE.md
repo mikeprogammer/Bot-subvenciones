@@ -84,3 +84,13 @@ El ejecutable es `BotSubvenciones_1_2_revision3.exe`; el título identifica la r
 La lectura distingue si falta DNI, número de expediente o ambos. Guarda la fila con el error y su número de origen, y continúa con las siguientes filas en lugar de detener el lote por datos incompletos. No rellena celdas vacías con valores anteriores. Los errores de consulta del navegador siguen deteniendo el lote. Las 29 pruebas incluyen un lote con una fila válida, otra incompleta y una tercera válida, verificando que consulta y exporta la tercera.
 
 Si una fila con datos visibles se recibe vacía, hay que contrastar la fila de origen y el `gid` configurado con la pestaña revisada. Esta revisión no corrige ni presume la causa de esa discrepancia.
+
+### FNMT temporal sin elevación
+
+El bot crea las reglas en HKCU al iniciar el lote y retira las entradas añadidas al finalizar, también ante errores. No instala políticas de equipo ni ofrece Configurar FNMT (administrador). Si Windows impide escribir en HKCU, detiene el lote con una explicación; no solicita elevación. Se puede desactivar la selección automática para elegir manualmente.
+
+Una regla permanente del equipo instalada por versiones anteriores debe retirarse una sola vez por quien tenga permisos. Si coincide con el certificado seleccionado, el bot avisa y detiene el lote para no dejar activa una selección persistente. Se conservan las reglas ajenas y los certificados. La retirada temporal no está garantizada ante cierre forzado o apagado; después de retirar reglas, reinicia el navegador manual para descartar selecciones TLS en memoria.
+
+### Configurar FNMT con administrador: permiso limitado
+
+El botón vuelve a estar disponible para autorizar una sola vez QueryValues y SetValue en la clave AutoSelectCertificateForUrls del usuario original y navegador seleccionado. Usa el SID capturado antes de elevarse y HKEY_USERS, incluso si UAC recibe credenciales de otro administrador. No instala reglas en HKLM ni modifica otras políticas. El permiso afecta también a otros programas del usuario. Las reglas siguen siendo temporales; la clave vacía permanece para conservar el permiso. Si una denegación explícita o política corporativa impide escribir, el bot comunica el error.

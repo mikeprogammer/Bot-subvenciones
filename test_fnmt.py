@@ -90,14 +90,57 @@ class FnmtTests(unittest.TestCase):
         registry.SetValueEx.assert_not_called()
 
 
-    def test_existing_machine_policy_needs_no_user_write(self):
+    def test_existing_machine_policy_requires_one_time_removal(self):
         cert = decode_certificate(self.row())
         registry = MagicMock()
         rule = rules_for(cert, 'https://auth.example.com')[0]
         registry.QueryInfoKey.return_value = (0, 1, 0)
         registry.EnumValue.return_value = ('1', rule, 1)
         with patch.dict('sys.modules', {'winreg': registry}), patch('fnmt.personal_certificates', return_value=[cert]):
-            with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'brave.exe', lambda msg: None):
-                pass
+            with self.assertRaisesRegex(RuntimeError, 'permanente'):
+                with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'brave.exe', lambda msg: None):
+                    self.fail('No debe utilizar una regla permanente')
         registry.CreateKeyEx.assert_not_called()
         registry.DeleteValue.assert_not_called()
+
+    def test_temporary_policy_removed_after_success_without_machine_write(self):
+        cert = decode_certificate(self.row())
+        registry = MagicMock()
+        registry.QueryInfoKey.return_value = (0, 0, 0)
+        rule = rules_for(cert, 'https://auth.example.com')[0]
+        registry.QueryValueEx.return_value = (rule, 1)
+        with patch.dict('sys.modules', {'winreg': registry}), patch('fnmt.personal_certificates', return_value=[cert]), patch('fnmt.machine_policy_ready', return_value=False):
+            with certificate_policy({'fnmt_origins': 'https://auth.example.com'}, 'chrome.exe', lambda msg: None):
+                registry.SetValueEx.assert_called_once()
+                registry.DeleteValue.assert_not_called()
+        self.assertEqual(registry.CreateKeyEx.call_args.args[0], registry.HKEY_CURRENT_USER)
+        registry.DeleteValue.assert_called_once()
+
+    def test_admin_setup_targets_original_user_and_only_selected_browser(self):
+        import json
+        import re
+        from fnmt import setup_user_policy_permissions
+        sid = 'S-1-5-21-100-200-300-1002'
+        identity = MagicMock(stdout=sid + '\n', returncode=0)
+        elevated = MagicMock(returncode=0)
+        registry = MagicMock()
+        with patch('fnmt.subprocess.run', side_effect=[identity, elevated]) as run, patch.dict('sys.modules', {'winreg': registry}):
+            setup_user_policy_permissions('brave.exe')
+        launcher = run.call_args_list[1].args[0][-1]
+        encoded = re.search(r"-EncodedCommand','([A-Za-z0-9+/=]+)'", launcher).group(1)
+        script = base64.b64decode(encoded).decode('utf-16le')
+        payload = re.search(r"FromBase64String\('([A-Za-z0-9+/=]+)'\)", script).group(1)
+        data = json.loads(base64.b64decode(payload))
+        self.assertEqual(data, {'sid': sid, 'path': r'Software\Policies\BraveSoftware\Brave\AutoSelectCertificateForUrls'})
+        self.assertIn('[Microsoft.Win32.Registry]::Users', script)
+        self.assertIn('InheritanceFlags]::None', script)
+        self.assertNotIn('FullControl', script)
+        self.assertNotIn('LocalMachine', script)
+        self.assertNotIn('SetValue(', script)
+
+    def test_cancelled_admin_setup_reports_failure(self):
+        from fnmt import setup_user_policy_permissions
+        identity = MagicMock(stdout='S-1-5-21-1002', returncode=0)
+        with patch('fnmt.subprocess.run', side_effect=[identity, MagicMock(returncode=1)]):
+            with self.assertRaisesRegex(RuntimeError, 'UAC'):
+                setup_user_policy_permissions('chrome.exe')

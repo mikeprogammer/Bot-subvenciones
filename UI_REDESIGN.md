@@ -25,16 +25,15 @@ Compilación:
 .\build_exe.ps1
 ```
 
-El script utiliza `--onedir` y `--collect-data customtkinter`. Distribuir la
-carpeta completa `dist\BotSubvenciones_1_5_1`, incluido `_internal`, no solamente
-el EXE. Esto sustituye la distribución anterior de un único ejecutable siguiendo
-las instrucciones de empaquetado de CustomTkinter:
-https://customtkinter.tomschimansky.com/documentation/packaging/
+El script utiliza `--onefile` y `--collect-data customtkinter`: el resultado
+es `dist/BotSubvenciones_1_5_1.exe`, sin carpeta `_internal` externa. Los recursos
+se extraen automáticamente a una carpeta temporal al arrancar. Para obtener
+la distribución en carpeta se puede usar `.\build_exe.ps1 -OneDir`.
 
 Comando equivalente:
 
 ```powershell
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onedir --windowed --name BotSubvenciones_1_5_1 --distpath dist --workpath build/pyinstaller --specpath build --collect-data customtkinter --collect-all playwright --collect-all googleapiclient --collect-all tzdata --collect-all certifi app.py
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name BotSubvenciones_1_5_1 --distpath dist --workpath build/pyinstaller --specpath build --collect-data customtkinter --collect-all playwright --collect-all googleapiclient --collect-all tzdata --collect-all certifi app.py
 ```
 
 Tema claro inicial; el interruptor cambia a oscuro durante la sesión. Avanzado
@@ -45,4 +44,4 @@ archivo de diagnóstico original; Limpiar solo borra su presentación en pantall
 Comprobaciones: creación de widgets, tema oscuro, despliegue de Avanzado,
 validación, log y adaptadores con escalados de widgets 1, 1.25 y 1.5. Esto no
 sustituye una revisión visual en monitores configurados a esos DPI ni una
-consulta real con OAuth/FNMT. No se ha recompilado el EXE con este rediseño.
+consulta real con OAuth/FNMT. El ejecutable se compila con build_exe.ps1; las comprobaciones de la entrega se guardan en dist.

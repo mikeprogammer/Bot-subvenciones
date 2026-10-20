@@ -1,4 +1,4 @@
-param([string]$Name = 'BotSubvenciones_1_5_1')
+param([string]$Name = 'BotSubvenciones_1_5_1', [switch]$OneDir)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $botRuntime = & .\.venv\Scripts\python.exe -c "import sys; print(sys.base_prefix)"
@@ -14,5 +14,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 & .\.venv\Scripts\python.exe -c "import tkinter; t=tkinter.Tk(); t.withdraw(); t.destroy()"
 if ($LASTEXITCODE -ne 0) { throw "La interfaz Tcl/Tk no funciona en este entorno de compilaciÃ³n." }
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onedir --windowed --name $Name --distpath dist --workpath build/pyinstaller --specpath build --collect-data customtkinter --collect-all playwright --collect-all googleapiclient --collect-all tzdata --collect-all certifi app.py
+$botPackageMode = if ($OneDir) { '--onedir' } else { '--onefile' }
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean $botPackageMode --windowed --name $Name --distpath dist --workpath build/pyinstaller --specpath build --collect-data customtkinter --collect-all playwright --collect-all googleapiclient --collect-all tzdata --collect-all certifi app.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

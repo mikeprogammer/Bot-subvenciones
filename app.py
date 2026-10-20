@@ -15,7 +15,7 @@ from ui import Interface, create_root
 from bot import browser_options, consult, find_form, form_diagnostic, header_row, new_output_path, parse_sheets_values, save_results
 from sheets_api import read_values, sheet_identity
 from playwright.sync_api import sync_playwright
-from fnmt import AUTH_ORIGINS, certificate_policy, personal_certificates, setup_user_policy_permissions
+from fnmt import AUTH_ORIGINS, certificate_policy, personal_certificates, install_machine_policy, prepare_machine_cleanup, cleanup_machine_policy
 from auto_login import automatic_login
 
 
@@ -68,6 +68,8 @@ class App:
         self.stop = threading.Event()
         self.resume = threading.Event()
         self.running = False
+        self.fnmt_busy = False
+        self.pending_cleanup = []
         self.last_output = None
         self.log_path = None
         self.settings = dict(DEFAULTS)
@@ -85,20 +87,67 @@ class App:
         root.after(200, self.detect_certificates)
 
     def setup_certificate_policy(self):
-        if not messagebox.askyesno('Configurar FNMT', 'Windows pedirá credenciales de administrador una vez. Se permitirá a este usuario leer, crear y borrar valores únicamente en la clave de certificados del navegador seleccionado. El permiso también se aplica a otros programas de este usuario. No se instalará una regla permanente ni se cambiarán otras políticas. ¿Continuar?'):
+        if self.running or self.fnmt_busy:
             return
+        if not messagebox.askyesno('Configurar FNMT', 'Se instalará una regla para el certificado y los dominios indicados en este navegador, para todos los usuarios del equipo. Al terminar el lote se solicitará UAC de nuevo para retirarla, incluidas las reglas idénticas configuradas anteriormente. Acepta ambos avisos. No se exporta la clave privada ni se borran otras reglas. ¿Continuar?'):
+            return
+        config = {'fnmt_origins': self.variables['fnmt_origins'].get(),
+                  'fnmt_thumbprint': self.certificates.get(self.certificate_label.get(), self.settings.get('fnmt_thumbprint', ''))}
         try:
             executable = browser_options({'browser_executable': self.variables['browser_executable'].get()})['executable_path']
         except Exception as exc:
             messagebox.showerror('Configurar FNMT', str(exc))
             return
-        def configure():
+        self.set_fnmt_busy(True)
+        def install():
             try:
-                setup_user_policy_permissions(executable)
-                self.events.put(('log', 'FNMT autorizado para este usuario y navegador. Las reglas se crearán al iniciar y se retirarán al finalizar.'))
+                install_machine_policy(config, executable)
+                self.events.put(('log', 'FNMT configurado. Cierra las ventanas de este navegador antes del lote. Al terminar, acepta UAC para retirar la regla.'))
             except Exception as exc:
-                self.events.put(('log', 'Error al configurar FNMT: ' + str(exc)))
-        threading.Thread(target=configure, daemon=True).start()
+                self.events.put(('error', str(exc)))
+            finally:
+                self.events.put(('fnmt_idle', None))
+        threading.Thread(target=install, daemon=True).start()
+
+    def set_fnmt_busy(self, busy):
+        """Solo se llama desde el hilo de interfaz."""
+        self.fnmt_busy = busy
+        for field in [*self.fields, self.check, self.run]:
+            field.configure(state='disabled' if busy else 'normal')
+        self.certificate_picker.configure(state='disabled' if busy else 'readonly')
+
+    def remove_certificate_policy(self):
+        if self.running or self.fnmt_busy:
+            return
+        # Conserva la captura del lote fallido aunque se cambie la selección.
+        pending = [dict(entry) for entry in self.pending_cleanup]
+        config = {'fnmt_origins': self.variables['fnmt_origins'].get(),
+                  'fnmt_thumbprint': self.certificates.get(self.certificate_label.get(), self.settings.get('fnmt_thumbprint', '')),
+                  '_fnmt_machine_cleanup': pending}
+        try:
+            executable = None if pending else browser_options({'browser_executable': self.variables['browser_executable'].get()})['executable_path']
+        except Exception as exc:
+            self.status.set('Error: ' + str(exc))
+            return
+        self.set_fnmt_busy(True)
+        self.status.set('Comprobando la regla FNMT para su retirada…')
+        def remove():
+            snapshot = pending
+            try:
+                if not pending:
+                    prepare_machine_cleanup(config, executable)
+                    snapshot = list(config.get('_fnmt_machine_cleanup', []))
+                if snapshot:
+                    cleanup_machine_policy(config, lambda msg: self.events.put(('log', msg)))
+                    self.events.put(('cleanup_resolved', snapshot))
+                else:
+                    self.events.put(('log', 'No hay reglas permanentes coincidentes con el certificado y dominios seleccionados.'))
+            except Exception as exc:
+                self.events.put(('cleanup_pending', snapshot))
+                self.events.put(('error', str(exc)))
+            finally:
+                self.events.put(('fnmt_idle', None))
+        threading.Thread(target=remove, daemon=True).start()
 
     def detect_certificates(self):
         def read():
@@ -141,6 +190,8 @@ class App:
         return config, executable
 
     def start(self, check_only):
+        if self.running or self.fnmt_busy:
+            return
         if not self.ui.validate():
             return
         try:
@@ -169,6 +220,8 @@ class App:
 
     def worker(self, config, executable, check_only):
         try:
+            if not check_only:
+                prepare_machine_cleanup(config, executable)
             records = parse_sheets_values(read_values(config['sheets_url'], config, executable), config)
             if not records:
                 raise ValueError('La pestaña está vacía.')
@@ -226,6 +279,14 @@ class App:
         except Exception as exc:
             self.events.put(('error', str(exc)))
         finally:
+            if not check_only:
+                snapshot = list(config.get('_fnmt_machine_cleanup', []))
+                try:
+                    cleanup_machine_policy(config, lambda msg: self.events.put(('log', msg)))
+                    self.events.put(('cleanup_resolved', snapshot))
+                except Exception as exc:
+                    self.events.put(('cleanup_pending', snapshot))
+                    self.events.put(('error', str(exc)))
             self.events.put(('done', None))
 
     def poll(self):
@@ -243,7 +304,15 @@ class App:
                 self.ui.append_log(value)
                 if kind != 'log' or not str(value).startswith('FNMT personales vigentes detectados:'):
                     self.status.set(str(value))
-            if kind == 'login':
+            if kind == 'cleanup_pending':
+                for entry in value:
+                    if entry not in self.pending_cleanup:
+                        self.pending_cleanup.append(entry)
+            elif kind == 'cleanup_resolved':
+                self.pending_cleanup = [entry for entry in self.pending_cleanup if entry not in value]
+            elif kind == 'fnmt_idle':
+                self.set_fnmt_busy(False)
+            elif kind == 'login':
                 self.continue_button.configure(state='normal')
             elif kind == 'progress':
                 self.continue_button.configure(state='disabled')
@@ -294,6 +363,9 @@ class App:
             os.startfile(self.last_output)
 
     def close(self):
+        if self.fnmt_busy:
+            messagebox.showinfo('Operación FNMT en curso', 'Espera a que termine la configuración o retirada de la regla FNMT antes de cerrar.')
+            return
         if self.running:
             messagebox.showinfo('Operación en curso', 'Pulsa Detener y espera antes de cerrar. La autorización OAuth puede tardar hasta cinco minutos.')
             return

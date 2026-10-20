@@ -103,13 +103,15 @@ def certificate_policy(config, executable, log):
     rules = rules_for(cert, config.get('fnmt_origins', AUTH_ORIGINS))
     path = roots[name] + r'\AutoSelectCertificateForUrls'
     if machine_policy_ready(path, rules):
-        raise RuntimeError('Existe una regla FNMT permanente del equipo para este certificado. Debe retirarse una vez antes de usar reglas temporales; el bot no puede eliminarla sin permisos de administrador.')
+        log('Selección automática FNMT configurada por el administrador.')
+        yield
+        return
     added = []
     try:
         try:
-            policy_key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE)
+            policy_key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
         except PermissionError:
-            raise PermissionError('Windows no permite configurar la selección automática en este usuario. No se iniciará el lote. Pulsa Configurar FNMT (administrador) una vez para autorizar las reglas temporales en este usuario y navegador.') from None
+            raise PermissionError('Windows no permite configurar la selección automática en este usuario. No se iniciará el lote. Pulsa Configurar FNMT (administrador) una vez y acepta el aviso de Windows.') from None
         with policy_key as key:
             existing = {}
             for i in range(winreg.QueryInfoKey(key)[1]):
@@ -125,20 +127,18 @@ def certificate_policy(config, executable, log):
                 winreg.SetValueEx(key, entry, 0, winreg.REG_SZ, rule)
                 added.append((entry, rule))
                 existing[entry] = rule
-        log('Regla temporal FNMT creada en el usuario; se retirará al finalizar el lote.')
         log('Selección automática FNMT preparada para el certificado personal vigente. El bot abrirá el acceso y elegirá el certificado. Windows puede solicitar un PIN si la clave lo exige.')
         yield
     finally:
         if added:
             try:
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
                     for entry, rule in added:
                         try:
                             if winreg.QueryValueEx(key, entry)[0] == rule:
                                 winreg.DeleteValue(key, entry)
                         except FileNotFoundError:
                             pass
-                log('Reglas temporales FNMT retiradas.')
             except OSError as exc:
                 log('No se pudo retirar la regla temporal FNMT: ' + str(exc))
 
@@ -153,51 +153,115 @@ def machine_policy_ready(path, rules):
         return False
 
 
-def setup_user_policy_permissions(executable):
-    """Autoriza solo valores FNMT del usuario original, incluso con otro administrador UAC."""
+def install_machine_policy(config, executable):
+    """Eleva solo la instalación de reglas públicas; nunca abre el navegador elevado."""
+    name = Path(executable).name.lower()
     roots = {'brave.exe': r'Software\Policies\BraveSoftware\Brave',
              'chrome.exe': r'Software\Policies\Google\Chrome',
              'msedge.exe': r'Software\Policies\Microsoft\Edge'}
-    name = Path(executable).name.lower()
     if name not in roots:
         raise ValueError('Selecciona Brave, Chrome o Edge.')
-    identity = subprocess.run(
-        ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
-         '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'],
-        capture_output=True, text=True, check=True, timeout=30,
-        creationflags=subprocess.CREATE_NO_WINDOW)
-    sid = identity.stdout.strip()
-    import re
-    if not re.fullmatch(r'S-1-5-(?:[0-9]+-)*[0-9]+', sid):
-        raise RuntimeError('No se pudo identificar el usuario original de Windows.')
+    cert = choose_certificate(personal_certificates(), config.get('fnmt_thumbprint', ''))
+    rules = rules_for(cert, config.get('fnmt_origins', AUTH_ORIGINS))
     path = roots[name] + r'\AutoSelectCertificateForUrls'
-    payload = base64.b64encode(json.dumps({'sid': sid, 'path': path}).encode('utf-8')).decode('ascii')
+    if machine_policy_ready(path, rules):
+        return
+    # JSON codificado: no se interpolan nombres de titulares en comandos PowerShell.
+    payload = base64.b64encode(json.dumps({'path': path, 'rules': rules}).encode('utf-8')).decode('ascii')
     script = """$ErrorActionPreference='Stop'
 $data = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('PAYLOAD')) | ConvertFrom-Json
-$users = [Microsoft.Win32.Registry]::Users
-$target = $data.sid + '\' + $data.path
-$created = $users.CreateSubKey($target)
-$created.Dispose()
-$adminRights = [Security.AccessControl.RegistryRights]::ReadKey -bor [Security.AccessControl.RegistryRights]::ChangePermissions
-$key = $users.OpenSubKey($target, [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, $adminRights)
+$key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($data.path)
 try {
- $acl = $key.GetAccessControl()
- $identity = [Security.Principal.SecurityIdentifier]::new($data.sid)
- $rights = [Security.AccessControl.RegistryRights]::QueryValues -bor [Security.AccessControl.RegistryRights]::SetValue
- $rule = [Security.AccessControl.RegistryAccessRule]::new($identity, $rights, [Security.AccessControl.InheritanceFlags]::None, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
- $acl.AddAccessRule($rule)
- $key.SetAccessControl($acl)
+ foreach ($rule in $data.rules) {
+  $names = @($key.GetValueNames())
+  $exists = @($names | Where-Object { $key.GetValue($_) -eq $rule }).Count -gt 0
+  if (-not $exists) {
+   $index = 1
+   while ($names -contains [string]$index) { $index++ }
+   $key.SetValue([string]$index, [string]$rule, [Microsoft.Win32.RegistryValueKind]::String)
+  }
+ }
 } finally { $key.Dispose() }
 """.replace('PAYLOAD', payload)
     encoded = base64.b64encode(script.encode('utf-16le')).decode('ascii')
     launcher = "$ErrorActionPreference='Stop'; $p=Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','" + encoded + "') -Wait -PassThru; exit $p.ExitCode"
     result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', launcher],
                             capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-    if result.returncode != 0:
-        raise RuntimeError('No se pudo autorizar FNMT. El administrador debe aceptar UAC; una política de empresa puede impedirlo.')
+    if result.returncode != 0 or not machine_policy_ready(path, rules):
+        raise RuntimeError('No se pudo instalar la regla FNMT. El administrador debe autorizar el aviso de Windows y permitir cambios en las políticas del navegador.')
+
+
+def prepare_machine_cleanup(config, executable):
+    """Captura solo las reglas exactas del certificado y dominios autorizados."""
+    config['_fnmt_machine_cleanup'] = []
+    if not config.get('auto_fnmt', True):
+        return
     import winreg
+    roots = {'brave.exe': r'Software\Policies\BraveSoftware\Brave',
+             'chrome.exe': r'Software\Policies\Google\Chrome',
+             'msedge.exe': r'Software\Policies\Microsoft\Edge'}
+    name = Path(executable).name.lower()
+    if name not in roots:
+        raise ValueError('Selecciona Brave, Chrome o Edge.')
+    cert = choose_certificate(personal_certificates(), config.get('fnmt_thumbprint', ''))
+    rules = rules_for(cert, config.get('fnmt_origins', AUTH_ORIGINS))
+    path = roots[name] + r'\AutoSelectCertificateForUrls'
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE):
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, winreg.KEY_READ) as key:
+            for index in range(winreg.QueryInfoKey(key)[1]):
+                entry, value, kind = winreg.EnumValue(key, index)
+                if kind == winreg.REG_SZ and value in rules:
+                    config['_fnmt_machine_cleanup'].append({'path': path, 'name': entry, 'value': value})
+    except FileNotFoundError:
+        pass
+
+
+def cleanup_machine_policy(config, log):
+    """Retira con UAC las entradas capturadas, si conservan su valor original."""
+    import winreg
+    entries = config.get('_fnmt_machine_cleanup', [])
+    pending = []
+    for entry in entries:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, entry['path'], 0, winreg.KEY_READ) as key:
+                value, kind = winreg.QueryValueEx(key, entry['name'])
+                if value == entry['value'] and kind == winreg.REG_SZ:
+                    pending.append(entry)
+        except FileNotFoundError:
             pass
-    except OSError:
-        raise RuntimeError('Se aplicó la configuración, pero Windows sigue impidiendo escribir en la clave FNMT del usuario.') from None
+    if not pending:
+        config['_fnmt_machine_cleanup'] = []
+        return
+    log('Retirando la regla FNMT del equipo. Acepta el aviso de administrador de Windows.')
+    payload = base64.b64encode(json.dumps(pending).encode('utf-8')).decode('ascii')
+    script = """$ErrorActionPreference='Stop'
+$entries = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('PAYLOAD')) | ConvertFrom-Json)
+foreach ($entry in $entries) {
+ $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey([string]$entry.path, $true)
+ if ($null -ne $key) {
+  try {
+   if ($key.GetValueNames() -contains [string]$entry.name) {
+    if ($key.GetValueKind([string]$entry.name) -eq [Microsoft.Win32.RegistryValueKind]::String -and $key.GetValue([string]$entry.name) -ceq [string]$entry.value) {
+     $key.DeleteValue([string]$entry.name, $false)
+    }
+   }
+  } finally { $key.Dispose() }
+ }
+}
+""".replace('PAYLOAD', payload)
+    encoded = base64.b64encode(script.encode('utf-16le')).decode('ascii')
+    launcher = "$ErrorActionPreference='Stop'; $p=Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','" + encoded + "') -Wait -PassThru; exit $p.ExitCode"
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', launcher],
+                            capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode != 0:
+        raise RuntimeError('No se pudo retirar la regla FNMT permanente. Acepta UAC al terminar; la regla puede seguir instalada. Pulsa Eliminar regla FNMT para reintentar su retirada.')
+    for entry in pending:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, entry['path'], 0, winreg.KEY_READ) as key:
+                value, kind = winreg.QueryValueEx(key, entry['name'])
+                if value == entry['value'] and kind == winreg.REG_SZ:
+                    raise RuntimeError('Windows conserva la regla FNMT permanente después de solicitar su borrado. Revisa los permisos o la política de empresa.')
+        except FileNotFoundError:
+            pass
+    config['_fnmt_machine_cleanup'] = []
+    log('Regla permanente FNMT retirada y ausencia verificada. Las demás políticas se conservan.')
